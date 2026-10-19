@@ -1,0 +1,13 @@
+import Link from "next/link";
+import { ArrowUpRight, ShieldCheck } from "lucide-react";
+
+export function Nav({ active }: { active?: "home" | "dashboard" }) {
+  return <header className="site-header"><div className="nav-wrap">
+    <Link href="/" className="brand"><span className="brand-mark"><ShieldCheck size={20} strokeWidth={2.2} /></span><span>trustbridge<span className="brand-ai">.ai</span></span></Link>
+    <nav className="nav-links" aria-label="Main navigation">
+      <Link className={active === "home" ? "nav-active" : ""} href="/">How it works</Link>
+      <Link className={active === "dashboard" ? "nav-active" : ""} href="/dashboard">Dashboard</Link>
+    </nav>
+    <Link href="/dashboard" className="nav-cta">Open dashboard <ArrowUpRight size={15} /></Link>
+  </div></header>;
+}
