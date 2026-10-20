@@ -1,32 +1,147 @@
 "use client";
 
-import { useState } from "react";
+import { useState, type FormEvent } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { ArrowLeft, ArrowRight, Check, FileCheck2, ShieldCheck, Sparkles } from "lucide-react";
 import { Nav } from "@/components/nav";
-import { Button, Card } from "@/components/ui";
+import { Badge, Button, Card } from "@/components/ui";
+import { DraftRequestSchema, type AgreementContent, type AgreementFields } from "@/lib/agreements/schema";
+
+type FormState = Omit<AgreementFields, "deliverables" | "acceptanceCriteria" | "includedRevisions"> & {
+  deliverablesText: string;
+  acceptanceCriteriaText: string;
+  includedRevisions: string;
+};
+
+const initialForm: FormState = {
+  title: "", serviceDescription: "", buyerName: "", sellerName: "", totalAmount: "", currency: "USD",
+  deadline: "", deliverablesText: "", acceptanceCriteriaText: "", includedRevisions: "0", additionalTerms: "",
+};
+
+type DraftApiResponse = {
+  status?: "ready" | "needs_clarification";
+  agreement?: AgreementContent;
+  questions?: string[];
+  error?: string;
+  issues?: Array<{ path: string; message: string }>;
+};
+
+const listFromText = (value: string) => value.split(/\r?\n/).map((item) => item.trim()).filter(Boolean);
 
 export default function NewAgreement() {
-  const [preview, setPreview] = useState(false);
-  const [service, setService] = useState("");
-  const [scope, setScope] = useState("");
-  const [amount, setAmount] = useState("");
-  const [partner, setPartner] = useState("");
+  const router = useRouter();
+  const [form, setForm] = useState<FormState>(initialForm);
+  const [errors, setErrors] = useState<Record<string, string>>({});
+  const [questions, setQuestions] = useState<string[]>([]);
+  const [answers, setAnswers] = useState<Record<string, string>>({});
+  const [message, setMessage] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  function update<K extends keyof FormState>(key: K, value: FormState[K]) {
+    setForm((previous) => ({ ...previous, [key]: value }));
+    setErrors((previous) => ({ ...previous, [key]: "" }));
+  }
+
+  async function requestDraft(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setMessage("");
+
+    const input = DraftRequestSchema.safeParse({
+      title: form.title,
+      serviceDescription: form.serviceDescription,
+      buyerName: form.buyerName,
+      sellerName: form.sellerName,
+      totalAmount: form.totalAmount,
+      currency: form.currency,
+      deadline: form.deadline,
+      deliverables: listFromText(form.deliverablesText),
+      acceptanceCriteria: listFromText(form.acceptanceCriteriaText),
+      includedRevisions: Number(form.includedRevisions),
+      additionalTerms: form.additionalTerms,
+      clarificationAnswers: questions.map((question) => ({ question, answer: answers[question] ?? "" })),
+    });
+
+    if (!input.success) {
+      const nextErrors: Record<string, string> = {};
+      for (const issue of input.error.issues) {
+        const key = String(issue.path[0] ?? "form");
+        if (!nextErrors[key]) nextErrors[key] = issue.message;
+      }
+      if (questions.some((question) => !answers[question]?.trim())) {
+        nextErrors.clarificationAnswers = "Answer each question before continuing.";
+      }
+      setErrors(nextErrors);
+      return;
+    }
+
+    setErrors({});
+    setBusy(true);
+    try {
+      const response = await fetch("/api/agreements/draft", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(input.data),
+      });
+      const result = (await response.json()) as DraftApiResponse;
+
+      if (!response.ok) {
+        if (result.issues) {
+          const serverErrors: Record<string, string> = {};
+          for (const issue of result.issues) if (!serverErrors[issue.path]) serverErrors[issue.path] = issue.message;
+          setErrors(serverErrors);
+        }
+        setMessage(result.error ?? "The draft could not be prepared. Please try again.");
+        return;
+      }
+
+      if (result.status === "needs_clarification" && result.questions?.length) {
+        setAnswers((previous) => Object.fromEntries(result.questions!.map((question) => [question, previous[question] ?? ""])));
+        setQuestions(result.questions);
+        setMessage("A few details need your input before the agreement is ready to review.");
+        return;
+      }
+
+      if (result.status === "ready" && result.agreement) {
+        window.sessionStorage.setItem("trustbridge:agreement-draft", JSON.stringify(result.agreement));
+        router.push("/dashboard/agreements/review");
+        return;
+      }
+
+      setMessage("The AI service returned an incomplete response. Nothing was saved; please try again.");
+    } catch {
+      setMessage("The request could not reach the server. Check your connection and try again.");
+    } finally {
+      setBusy(false);
+    }
+  }
 
   return <main className="dashboard-page"><Nav active="dashboard" /><div className="dashboard-wrap agreement-builder">
     <Link className="back-link" href="/dashboard"><ArrowLeft size={15} /> Back to workspace</Link>
-    <div className="builder-heading"><div><div className="welcome-kicker"><Sparkles size={13} /> START WITH CLEAR EXPECTATIONS</div><h1>{preview ? "Your agreement preview" : "A better start to your next project."}</h1><p>{preview ? "Take a look at the details you’ve brought together." : "Write down the essentials. You and your client can build from the same understanding."}</p></div><span className="builder-step"><i className="step-current">{preview ? <Check size={12} /> : "1"}</i><span className="step-line" /><i className={preview ? "step-current" : ""}>{preview ? "2" : "2"}</i><span>{preview ? "Preview" : "Details"}</span></span></div>
-    {!preview ? <div className="builder-grid"><Card className="builder-card"><div className="builder-card-heading"><span className="builder-icon"><FileCheck2 size={18} /></span><div><h2>Project details</h2><p>A few clear details make a great first step.</p></div></div>
-      <form className="agreement-form" onSubmit={(event) => { event.preventDefault(); setPreview(true); }}>
-        <label>What are you working on?<input required maxLength={80} value={service} onChange={(event) => setService(event.target.value)} placeholder="e.g. Brand identity refresh" /></label>
-        <label>Who are you working with?<input maxLength={60} value={partner} onChange={(event) => setPartner(event.target.value)} placeholder="Client or provider name" /></label>
-        <label>What’s included?<textarea required maxLength={400} rows={4} value={scope} onChange={(event) => setScope(event.target.value)} placeholder="Describe the deliverables, milestones, or key expectations" /></label>
-        <label>Agreed project total <span className="input-wrap"><span>$</span><input required type="number" min="1" step="0.01" value={amount} onChange={(event) => setAmount(event.target.value)} placeholder="0.00" /><i>USD</i></span></label>
-        <div className="form-note"><ShieldCheck size={15} /><span>Creating this preview doesn’t charge anyone. Payment connection comes in a later milestone.</span></div>
-        <div className="form-footer"><Link href="/dashboard" className="cancel-link">Cancel</Link><Button type="submit">Preview agreement <ArrowRight size={16} /></Button></div>
+    <div className="builder-heading"><div><div className="welcome-kicker"><Sparkles size={13} /> START WITH CLEAR EXPECTATIONS</div><h1>Start with the important details.</h1><p>TrustBridge AI will help clarify the request and prepare a draft for your review.</p></div><span className="builder-step"><i className="step-current">1</i><span className="step-line" /><i>2</i><span>Review</span></span></div>
+    <div className="builder-grid"><Card className="builder-card"><div className="builder-card-heading"><span className="builder-icon"><FileCheck2 size={18} /></span><div><h2>Agreement details</h2><p>Clear details make for a better first draft.</p></div></div>
+      <form className="agreement-form milestone-form" onSubmit={requestDraft} noValidate>
+        <div className="form-section-label">THE PROJECT</div>
+        <label>Agreement title <span className="required-mark">Required</span><input required maxLength={120} value={form.title} onChange={(event) => update("title", event.target.value)} placeholder="e.g. Brand identity refresh" aria-invalid={Boolean(errors.title)} />{errors.title && <small className="field-error">{errors.title}</small>}</label>
+        <label>Service description<textarea required rows={4} maxLength={3000} value={form.serviceDescription} onChange={(event) => update("serviceDescription", event.target.value)} placeholder="Describe the work in your own words. What outcome are you looking for?" aria-invalid={Boolean(errors.serviceDescription)} />{errors.serviceDescription && <small className="field-error">{errors.serviceDescription}</small>}</label>
+        <div className="form-pair"><label>Buyer display name<input required maxLength={80} value={form.buyerName} onChange={(event) => update("buyerName", event.target.value)} placeholder="Who is commissioning the work?" aria-invalid={Boolean(errors.buyerName)} />{errors.buyerName && <small className="field-error">{errors.buyerName}</small>}</label><label>Seller display name<input required maxLength={80} value={form.sellerName} onChange={(event) => update("sellerName", event.target.value)} placeholder="Who is providing the service?" aria-invalid={Boolean(errors.sellerName)} />{errors.sellerName && <small className="field-error">{errors.sellerName}</small>}</label></div>
+
+        <div className="form-section-label">PRICE & TIMING</div>
+        <div className="form-pair"><label>Total amount <span className="input-wrap"><span>{form.currency}</span><input required type="number" min="0.01" step="0.01" max="999999999" value={form.totalAmount} onChange={(event) => update("totalAmount", event.target.value)} placeholder="0.00" aria-invalid={Boolean(errors.totalAmount)} /></span>{errors.totalAmount && <small className="field-error">{errors.totalAmount}</small>}</label><label>Currency<select value={form.currency} onChange={(event) => update("currency", event.target.value as FormState["currency"])}>{["USD", "EUR", "GBP", "NGN", "CAD", "AUD"].map((currency) => <option key={currency} value={currency}>{currency}</option>)}</select></label></div>
+        <label>Deadline<input required type="date" min={new Date().toISOString().slice(0, 10)} value={form.deadline} onChange={(event) => update("deadline", event.target.value)} aria-invalid={Boolean(errors.deadline)} />{errors.deadline && <small className="field-error">{errors.deadline}</small>}</label>
+
+        <div className="form-section-label">WHAT DOES “DONE” LOOK LIKE?</div>
+        <label>Deliverables <span className="field-hint">One item per line</span><textarea required rows={4} maxLength={4000} value={form.deliverablesText} onChange={(event) => update("deliverablesText", event.target.value)} placeholder={"Brand logo files\nColor palette and typography guide\nOne-page usage guide"} aria-invalid={Boolean(errors.deliverables)} />{errors.deliverables && <small className="field-error">{errors.deliverables}</small>}</label>
+        <label>Acceptance criteria <span className="field-hint">One item per line · the AI will ask if this needs more detail</span><textarea rows={3} maxLength={4000} value={form.acceptanceCriteriaText} onChange={(event) => update("acceptanceCriteriaText", event.target.value)} placeholder="How will both sides know each deliverable is complete?" aria-invalid={Boolean(errors.acceptanceCriteria)} />{errors.acceptanceCriteria && <small className="field-error">{errors.acceptanceCriteria}</small>}</label>
+        <div className="form-pair"><label>Included revisions<input type="number" min="0" max="20" step="1" value={form.includedRevisions} onChange={(event) => update("includedRevisions", event.target.value)} aria-invalid={Boolean(errors.includedRevisions)} />{errors.includedRevisions && <small className="field-error">{errors.includedRevisions}</small>}</label><label>Additional terms <span className="field-hint">Optional</span><textarea rows={2} maxLength={1500} value={form.additionalTerms} onChange={(event) => update("additionalTerms", event.target.value)} placeholder="Any other agreed details" aria-invalid={Boolean(errors.additionalTerms)} />{errors.additionalTerms && <small className="field-error">{errors.additionalTerms}</small>}</label></div>
+
+        {questions.length > 0 && <section className="clarification-panel" aria-labelledby="clarification-title"><div className="clarification-heading"><span className="clarification-icon"><Sparkles size={15} /></span><div><h3 id="clarification-title">A few things to clarify</h3><p>The AI found details that need both sides’ agreement before it can prepare the draft.</p></div><Badge tone="violet">Needs your input</Badge></div>{questions.map((question, index) => <label className="clarification-question" key={`${question}-${index}`}>{question}<textarea required rows={2} maxLength={1000} value={answers[question] ?? ""} onChange={(event) => setAnswers((previous) => ({ ...previous, [question]: event.target.value }))} placeholder="Add the agreed detail" />{errors.clarificationAnswers && !answers[question]?.trim() && <small className="field-error">{errors.clarificationAnswers}</small>}</label>)}</section>}
+
+        {message && <div className="form-message" role="status">{message}</div>}
+        <div className="form-note"><ShieldCheck size={15} /><span>AI prepares a starting draft from your details. Review every term before saving. Nothing is sent, signed, or charged.</span></div>
+        <div className="form-footer"><Link href="/dashboard" className="cancel-link">Cancel</Link><Button type="submit" disabled={busy}>{busy ? <><span className="loading-spinner" /> Drafting…</> : <>{questions.length ? "Continue with answers" : "Draft with AI"} <ArrowRight size={16} /></>}</Button></div>
       </form>
-    </Card><Card className="builder-aside"><div className="aside-icon"><ShieldCheck size={18} /></div><h3>Clarity protects everyone.</h3><p>Write the key details in a way both sides can revisit. There’s no payment or signature in this frontend preview.</p><div className="aside-check"><span><Check size={12} /></span>Agree on what “done” means</div><div className="aside-check"><span><Check size={12} /></span>Set a fair, shared price</div><div className="aside-check"><span><Check size={12} /></span>Keep expectations in one place</div></Card></div>
-    : <Card className="agreement-result"><div className="result-top"><div className="result-file"><FileCheck2 size={19} /></div><span className="preview-only">DRAFT PREVIEW</span></div><p className="eyebrow">AGREEMENT · UNSAVED DRAFT</p><h2>{service}</h2><p className="result-partner">Prepared{partner ? ` for ${partner}` : " for your project partner"}</p><div className="result-rule" /><p className="eyebrow">PROJECT SCOPE</p><p className="result-scope">{scope}</p><div className="result-rule" /><div className="result-total"><span>Agreed project total</span><strong>${Number(amount).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} <small>USD</small></strong></div><div className="result-notice"><ShieldCheck size={16} /><p>This is an unsaved preview. No agreement was sent and no payment was made.</p></div><div className="result-actions"><Button variant="quiet" onClick={() => setPreview(false)}>Edit details</Button><Button href="/dashboard">Return to workspace <ArrowRight size={15} /></Button></div></Card>}
-    <p className="builder-caption">TrustBridge AI helps both sides start from the same page.</p>
+    </Card><Card className="builder-aside"><div className="aside-icon"><ShieldCheck size={18} /></div><h3>Clarity protects everyone.</h3><p>AI suggestions are a starting point, not legal advice. Both parties should review the terms before agreeing.</p><div className="aside-check"><span><Check size={12} /></span>Keep expectations specific</div><div className="aside-check"><span><Check size={12} /></span>Answer clarification questions first</div><div className="aside-check"><span><Check size={12} /></span>Review and edit before saving</div><div className="aside-privacy"><ShieldCheck size={14} /> Your OpenAI key stays on the server.</div></Card></div>
+    <p className="builder-caption">No payment is made by drafting or saving an agreement.</p>
   </div></main>;
 }
