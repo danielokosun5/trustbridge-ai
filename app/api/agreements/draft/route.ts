@@ -3,6 +3,7 @@ import { zodTextFormat } from "openai/helpers/zod";
 import { NextResponse } from "next/server";
 import { AIEnrichmentSchema, AgreementContentSchema, DraftRequestSchema } from "@/lib/agreements/schema";
 import { allowRequest, requestAddress } from "@/lib/http/rate-limit";
+import { ownerApiError, sameOriginMutation } from "@/lib/auth/owner-authorization";
 
 export const runtime = "nodejs";
 
@@ -11,6 +12,9 @@ const instructions = `You help two independent parties turn a service request in
 const json = (body: unknown, status = 200) => NextResponse.json(body, { status });
 
 export async function POST(request: Request) {
+  const authError = await ownerApiError(request);
+  if (authError) return authError;
+  if (!sameOriginMutation(request)) return json({ error: "Invalid request origin." }, 403);
   if (!allowRequest(`draft:${requestAddress(request)}`, 8, 60_000)) {
     return json({ error: "Too many drafting requests. Please wait a minute and try again." }, 429);
   }

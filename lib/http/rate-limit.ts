@@ -13,6 +13,10 @@ export function allowRequest(key: string, limit: number, windowMs: number) {
   return true;
 }
 
+export function clearRequestLimit(key: string) {
+  windows.delete(key);
+}
+
 export function requestAddress(request: Request) {
-  return request.headers.get("x-forwarded-for")?.split(",").at(-1)?.trim() || "local";
+  return request.headers.get("x-real-ip")?.trim() || request.headers.get("x-forwarded-for")?.split(",").at(-1)?.trim() || "local";
 }

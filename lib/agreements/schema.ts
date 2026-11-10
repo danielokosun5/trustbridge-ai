@@ -53,4 +53,9 @@ export type SavedAgreement = AgreementContent & {
   id: string;
   status: "saved";
   createdAt: string;
+  paymentStatus: "unpaid" | "creating" | "pending" | "capturing" | "paid" | "cancelled" | "failed";
+  paypalOrderId: string | null;
+  paypalCaptureId: string | null;
+  paymentAmount: string | null;
+  paymentCurrency: string | null;
 };

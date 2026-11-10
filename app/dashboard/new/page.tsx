@@ -7,6 +7,7 @@ import { ArrowLeft, ArrowRight, Check, FileCheck2, ShieldCheck, Sparkles } from 
 import { Nav } from "@/components/nav";
 import { Badge, Button, Card } from "@/components/ui";
 import { DraftRequestSchema, type AgreementContent, type AgreementFields } from "@/lib/agreements/schema";
+import { createManualAgreementDraft } from "@/lib/agreements/manual-draft";
 
 type FormState = Omit<AgreementFields, "deliverables" | "acceptanceCriteria" | "includedRevisions"> & {
   deliverablesText: string;
@@ -116,6 +117,54 @@ export default function NewAgreement() {
     }
   }
 
+  async function saveManualDraft() {
+    setMessage("");
+    const input = createManualAgreementDraft({
+      title: form.title,
+      serviceDescription: form.serviceDescription,
+      buyerName: form.buyerName,
+      sellerName: form.sellerName,
+      totalAmount: form.totalAmount,
+      currency: form.currency,
+      deadline: form.deadline,
+      deliverables: listFromText(form.deliverablesText),
+      acceptanceCriteria: listFromText(form.acceptanceCriteriaText),
+      includedRevisions: Number(form.includedRevisions),
+      additionalTerms: form.additionalTerms,
+    });
+
+    if (!input.success) {
+      const nextErrors: Record<string, string> = {};
+      for (const issue of input.error.issues) {
+        const key = String(issue.path[0] ?? "form");
+        if (!nextErrors[key]) nextErrors[key] = issue.message;
+      }
+      setErrors(nextErrors);
+      setMessage("Review the highlighted fields before saving this manual draft.");
+      return;
+    }
+
+    setErrors({});
+    setBusy(true);
+    try {
+      const response = await fetch("/api/agreements", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(input.data),
+      });
+      const result = (await response.json()) as { agreement?: { id: string }; error?: string };
+      if (!response.ok || !result.agreement?.id) {
+        setMessage(result.error ?? "The manual draft could not be saved. Please try again.");
+        return;
+      }
+      router.push(`/dashboard/agreements/${result.agreement.id}`);
+    } catch {
+      setMessage("The request could not reach the server. Check your connection and try again.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return <main className="dashboard-page"><Nav active="dashboard" /><div className="dashboard-wrap agreement-builder">
     <Link className="back-link" href="/dashboard"><ArrowLeft size={15} /> Back to workspace</Link>
     <div className="builder-heading"><div><div className="welcome-kicker"><Sparkles size={13} /> START WITH CLEAR EXPECTATIONS</div><h1>Start with the important details.</h1><p>TrustBridge AI will help clarify the request and prepare a draft for your review.</p></div><span className="builder-step"><i className="step-current">1</i><span className="step-line" /><i>2</i><span>Review</span></span></div>
@@ -135,13 +184,13 @@ export default function NewAgreement() {
         <label>Acceptance criteria <span className="field-hint">One item per line · the AI will ask if this needs more detail</span><textarea rows={3} maxLength={4000} value={form.acceptanceCriteriaText} onChange={(event) => update("acceptanceCriteriaText", event.target.value)} placeholder="How will both sides know each deliverable is complete?" aria-invalid={Boolean(errors.acceptanceCriteria)} />{errors.acceptanceCriteria && <small className="field-error">{errors.acceptanceCriteria}</small>}</label>
         <div className="form-pair"><label>Included revisions<input type="number" min="0" max="20" step="1" value={form.includedRevisions} onChange={(event) => update("includedRevisions", event.target.value)} aria-invalid={Boolean(errors.includedRevisions)} />{errors.includedRevisions && <small className="field-error">{errors.includedRevisions}</small>}</label><label>Additional terms <span className="field-hint">Optional</span><textarea rows={2} maxLength={1500} value={form.additionalTerms} onChange={(event) => update("additionalTerms", event.target.value)} placeholder="Any other agreed details" aria-invalid={Boolean(errors.additionalTerms)} />{errors.additionalTerms && <small className="field-error">{errors.additionalTerms}</small>}</label></div>
 
-        {questions.length > 0 && <section className="clarification-panel" aria-labelledby="clarification-title"><div className="clarification-heading"><span className="clarification-icon"><Sparkles size={15} /></span><div><h3 id="clarification-title">A few things to clarify</h3><p>The AI found details that need both sides’ agreement before it can prepare the draft.</p></div><Badge tone="violet">Needs your input</Badge></div>{questions.map((question, index) => <label className="clarification-question" key={`${question}-${index}`}>{question}<textarea required rows={2} maxLength={1000} value={answers[question] ?? ""} onChange={(event) => setAnswers((previous) => ({ ...previous, [question]: event.target.value }))} placeholder="Add the agreed detail" />{errors.clarificationAnswers && !answers[question]?.trim() && <small className="field-error">{errors.clarificationAnswers}</small>}</label>)}</section>}
+        {questions.length > 0 && <section className="clarification-panel" aria-labelledby="clarification-title"><div className="clarification-heading"><span className="clarification-icon"><Sparkles size={15} /></span><div><h3 id="clarification-title">A few things to clarify</h3><p>The AI found details that need clarification before it can prepare the draft.</p></div><Badge tone="violet">Needs your input</Badge></div>{questions.map((question, index) => <label className="clarification-question" key={`${question}-${index}`}>{question}<textarea required rows={2} maxLength={1000} value={answers[question] ?? ""} onChange={(event) => setAnswers((previous) => ({ ...previous, [question]: event.target.value }))} placeholder="Add the agreed detail" />{errors.clarificationAnswers && !answers[question]?.trim() && <small className="field-error">{errors.clarificationAnswers}</small>}</label>)}</section>}
 
         {message && <div className="form-message" role="status">{message}</div>}
-        <div className="form-note"><ShieldCheck size={15} /><span>AI prepares a starting draft from your details. Review every term before saving. Nothing is sent, signed, or charged.</span></div>
-        <div className="form-footer"><Link href="/dashboard" className="cancel-link">Cancel</Link><Button type="submit" disabled={busy}>{busy ? <><span className="loading-spinner" /> Drafting…</> : <>{questions.length ? "Continue with answers" : "Draft with AI"} <ArrowRight size={16} /></>}</Button></div>
+        <div className="form-note"><ShieldCheck size={15} /><span>Draft with AI to clarify your request, or save a clearly labelled manual draft from these details. Nothing is signed or charged.</span></div>
+        <div className="form-footer"><Link href="/dashboard" className="cancel-link">Cancel</Link><Button type="button" variant="secondary" disabled={busy} onClick={() => void saveManualDraft()}>{busy ? <><span className="loading-spinner" /> Saving…</> : <>Save Draft <FileCheck2 size={16} /></>}</Button><Button type="submit" disabled={busy}>{busy ? <><span className="loading-spinner" /> Drafting…</> : <>{questions.length ? "Continue with answers" : "Draft with AI"} <ArrowRight size={16} /></>}</Button></div>
       </form>
-    </Card><Card className="builder-aside"><div className="aside-icon"><ShieldCheck size={18} /></div><h3>Clarity protects everyone.</h3><p>AI suggestions are a starting point, not legal advice. Both parties should review the terms before agreeing.</p><div className="aside-check"><span><Check size={12} /></span>Keep expectations specific</div><div className="aside-check"><span><Check size={12} /></span>Answer clarification questions first</div><div className="aside-check"><span><Check size={12} /></span>Review and edit before saving</div><div className="aside-privacy"><ShieldCheck size={14} /> Your OpenAI key stays on the server.</div></Card></div>
+    </Card><Card className="builder-aside"><div className="aside-icon"><ShieldCheck size={18} /></div><h3>Start with clear details.</h3><p>AI suggestions are a starting point, not legal advice. Both parties should review the terms before relying on them.</p><div className="aside-check"><span><Check size={12} /></span>Keep expectations specific</div><div className="aside-check"><span><Check size={12} /></span>Answer clarification questions first</div><div className="aside-check"><span><Check size={12} /></span>Review and edit before saving</div><div className="aside-privacy"><ShieldCheck size={14} /> Your OpenAI key stays on the server.</div></Card></div>
     <p className="builder-caption">No payment is made by drafting or saving an agreement.</p>
   </div></main>;
 }

@@ -2,15 +2,19 @@ import { NextResponse } from "next/server";
 import { getAgreementRepository } from "@/lib/agreements/repository";
 import { AgreementContentSchema } from "@/lib/agreements/schema";
 import { allowRequest, requestAddress } from "@/lib/http/rate-limit";
+import { ownerApiError, sameOriginMutation } from "@/lib/auth/owner-authorization";
 
 export const runtime = "nodejs";
 
-const databaseError = () => NextResponse.json({ error: "The agreement database is unavailable. Check the database configuration and local write permissions." }, { status: 503 });
+const privateHeaders = { "Cache-Control": "private, no-store" };
+const databaseError = () => NextResponse.json({ error: "The agreement database is unavailable. Check the database configuration and local write permissions." }, { status: 503, headers: privateHeaders });
 
-export async function GET() {
+export async function GET(request: Request) {
+  const authError = await ownerApiError(request);
+  if (authError) return authError;
   try {
     const repository = await getAgreementRepository();
-    return NextResponse.json({ agreements: await repository.list() });
+    return NextResponse.json({ agreements: await repository.list() }, { headers: privateHeaders });
   } catch (error) {
     console.error("Agreement list failed:", error instanceof Error ? error.message : "Unknown database error");
     return databaseError();
@@ -18,6 +22,9 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
+  const authError = await ownerApiError(request);
+  if (authError) return authError;
+  if (!sameOriginMutation(request)) return NextResponse.json({ error: "Invalid request origin." }, { status: 403 });
   if (!allowRequest(`save:${requestAddress(request)}`, 20, 60_000)) {
     return NextResponse.json({ error: "Too many save requests. Please wait a minute and try again." }, { status: 429 });
   }
