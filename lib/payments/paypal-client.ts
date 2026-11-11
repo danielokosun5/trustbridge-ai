@@ -142,6 +142,22 @@ export function createPayPalClient(fetcher: typeof fetch = fetch) {
     if (path === "/v2/checkout/orders" && init.method === "POST") {
       const order = result as PayPalOrder;
       console.info("[TrustBridge PayPal] Orders API create response", JSON.stringify({ httpStatus: response.status, debugId: debugId ?? null, ...safeOrderSummary(order) }));
+    } else if (path.startsWith("/v2/checkout/orders/") && path.endsWith("/capture") && init.method === "POST") {
+      const order = result as PayPalOrder;
+      const captures = order.purchase_units?.[0]?.payments?.captures ?? [];
+      const capture = captures[0];
+      console.info("[TrustBridge PayPal] Orders API capture response", JSON.stringify({
+        httpStatus: response.status,
+        debugId: debugId ?? null,
+        orderId: order.id ?? null,
+        orderStatus: order.status ?? null,
+        purchaseUnitCount: order.purchase_units?.length ?? 0,
+        captureCount: captures.length,
+        captureId: capture?.id ?? null,
+        captureStatus: capture?.status ?? null,
+        captureAmount: capture?.amount?.value ?? null,
+        captureCurrency: capture?.amount?.currency_code ?? null,
+      }));
     } else if (path.startsWith("/v2/checkout/orders/") && init.method === "GET") {
       const order = result as PayPalOrder;
       console.info("[TrustBridge PayPal] Orders API GET response", JSON.stringify({ httpStatus: response.status, debugId: debugId ?? null, ...safeOrderSummary(order) }));
@@ -173,6 +189,7 @@ export function createPayPalClient(fetcher: typeof fetch = fetch) {
     captureOrder(orderId: string, requestId: string) {
       return request<PayPalOrder>(`/v2/checkout/orders/${encodeURIComponent(orderId)}/capture`, {
         method: "POST",
+        headers: { Prefer: "return=representation" },
         body: "{}",
       }, requestId);
     },
