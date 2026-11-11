@@ -9,11 +9,11 @@ import { POST } from "@/app/api/agreements/draft/route";
 import { createOwnerSession, OWNER_SESSION_COOKIE } from "@/lib/auth/owner-session";
 
 test("AI draft endpoint explains when the server API key is not configured", async () => {
-  const previousKey = process.env.OPENAI_API_KEY;
+  const previousKey = process.env.GEMINI_API_KEY;
   const previousUsername = process.env.TRUSTBRIDGE_OWNER_USERNAME;
   const previousPassword = process.env.TRUSTBRIDGE_OWNER_PASSWORD;
   const previousSecret = process.env.TRUSTBRIDGE_SESSION_SECRET;
-  process.env.OPENAI_API_KEY = "";
+  process.env.GEMINI_API_KEY = "";
   process.env.TRUSTBRIDGE_OWNER_USERNAME = "test-owner";
   process.env.TRUSTBRIDGE_OWNER_PASSWORD = "test-password-123";
   process.env.TRUSTBRIDGE_SESSION_SECRET = "test-session-secret-that-is-at-least-32-bytes";
@@ -52,10 +52,10 @@ test("AI draft endpoint explains when the server API key is not configured", asy
 
     assert.equal(response.status, 503);
     assert.equal(result.code, "AI_NOT_CONFIGURED");
-    assert.match(result.error ?? "", /OPENAI_API_KEY/);
+    assert.match(result.error ?? "", /GEMINI_API_KEY/);
   } finally {
-    if (previousKey === undefined) delete process.env.OPENAI_API_KEY;
-    else process.env.OPENAI_API_KEY = previousKey;
+    if (previousKey === undefined) delete process.env.GEMINI_API_KEY;
+    else process.env.GEMINI_API_KEY = previousKey;
     if (previousUsername === undefined) delete process.env.TRUSTBRIDGE_OWNER_USERNAME;
     else process.env.TRUSTBRIDGE_OWNER_USERNAME = previousUsername;
     if (previousPassword === undefined) delete process.env.TRUSTBRIDGE_OWNER_PASSWORD;

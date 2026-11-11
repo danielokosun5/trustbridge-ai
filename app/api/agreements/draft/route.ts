@@ -1,5 +1,4 @@
-import OpenAI from "openai";
-import { zodTextFormat } from "openai/helpers/zod";
+import { GoogleGenAI, Type } from "@google/genai";
 import { NextResponse } from "next/server";
 import { AIEnrichmentSchema, AgreementContentSchema, DraftRequestSchema } from "@/lib/agreements/schema";
 import { allowRequest, requestAddress } from "@/lib/http/rate-limit";
@@ -34,20 +33,19 @@ export async function POST(request: Request) {
     return json({ error: "Check the agreement details and try again.", issues: input.error.issues.map(({ path, message }) => ({ path: path.join("."), message })) }, 400);
   }
 
-  const apiKey = process.env.OPENAI_API_KEY?.trim();
+  const apiKey = process.env.GEMINI_API_KEY?.trim();
   if (!apiKey) {
     return json({
       code: "AI_NOT_CONFIGURED",
-      error: "AI drafting is not configured. Add OPENAI_API_KEY to .env.local, then restart the development server.",
+      error: "AI drafting is not configured. Add GEMINI_API_KEY to .env.local, then restart the development server.",
     }, 503);
   }
 
   try {
-    const client = new OpenAI({ apiKey, timeout: 60_000, maxRetries: 1 });
-    const response = await client.responses.parse({
-      model: process.env.OPENAI_MODEL?.trim() || "gpt-5.4-mini",
-      instructions,
-      input: JSON.stringify({
+    const ai = new GoogleGenAI({ apiKey });
+    const response = await ai.models.generateContent({
+      model: process.env.GEMINI_MODEL?.trim() || "gemini-3.8-flash",
+      contents: JSON.stringify({
         agreement_request: {
           title: input.data.title,
           service_description: input.data.serviceDescription,
@@ -63,15 +61,61 @@ export async function POST(request: Request) {
         },
         clarification_answers: input.data.clarificationAnswers,
       }),
-      text: { format: zodTextFormat(AIEnrichmentSchema, "agreement_draft") },
-      max_output_tokens: 2200,
+      config: {
+        systemInstruction: instructions,
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            title: { type: Type.STRING },
+            serviceDescription: { type: Type.STRING },
+            summary: { type: Type.STRING },
+            deliverables: {
+              type: Type.ARRAY,
+              items: { type: Type.STRING },
+            },
+            acceptanceCriteria: {
+              type: Type.ARRAY,
+              items: { type: Type.STRING },
+            },
+            additionalTerms: { type: Type.STRING },
+            clarificationQuestions: {
+              type: Type.ARRAY,
+              items: { type: Type.STRING },
+            },
+          },
+          required: [
+            "title",
+            "serviceDescription",
+            "summary",
+            "deliverables",
+            "acceptanceCriteria",
+            "additionalTerms",
+            "clarificationQuestions",
+          ],
+        },
+        maxOutputTokens: 2200,
+      },
     });
 
-    if (response.status !== "completed" || !response.output_parsed) {
+    const text = response.text?.trim();
+    if (!text) {
       return json({ error: "The AI service did not return a complete draft. Review the details and try again." }, 502);
     }
 
-    const { clarificationQuestions, ...generated } = response.output_parsed;
+    let parsedOutput: unknown;
+    try {
+      parsedOutput = JSON.parse(text);
+    } catch {
+      return json({ error: "The AI service did not return a complete draft. Review the details and try again." }, 502);
+    }
+
+    const enrichment = AIEnrichmentSchema.safeParse(parsedOutput);
+    if (!enrichment.success) {
+      return json({ error: "The AI service did not return a complete draft. Review the details and try again." }, 502);
+    }
+
+    const { clarificationQuestions, ...generated } = enrichment.data;
     if (clarificationQuestions.length > 0) {
       return json({ status: "needs_clarification", questions: clarificationQuestions });
     }
